@@ -1,0 +1,67 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set}
+      POSTGRES_USER: ${POSTGRES_USER:?set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [reflex]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis_data:/data]
+    networks: [reflex]
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      PORT: 8080
+      APP_ENV: production
+      AUTH_SECRET: ${AUTH_SECRET:?set}
+      BOOTSTRAP_TOKEN: ${BOOTSTRAP_TOKEN:?set}
+      CORS_ORIGIN: ${CORS_ORIGIN:?set}
+      MEDIA_DIR: /data/media
+    volumes: [media_data:/data/media]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "/reflex-api", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [reflex]
+
+  web:
+    build: ./web
+    restart: unless-stopped
+    networks: [reflex]
+
+  gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports: ["443:443"]
+    volumes:
+      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+    depends_on: [api, web]
+    networks: [reflex]
+
+networks: {reflex: {}}
+
+volumes:
+  postgres_data: {}
+  redis_data: {}
+  media_data: {}
